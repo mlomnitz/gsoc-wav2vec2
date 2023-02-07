@@ -66,7 +66,8 @@ class TFKerasModel(tf.keras.Model):
             )
             try:
                 for url in [config_url, model_url]:
-                    subprocess.run(url.split(), check=True, stderr=subprocess.PIPE)
+                    subprocess.run(url.split(), check=True,
+                                   stderr=subprocess.PIPE)
             except:
                 raise ValueError(
                     f"Couldn't download model weights from https://huggingface.co/{model_id}"
@@ -76,7 +77,8 @@ class TFKerasModel(tf.keras.Model):
             print(f"Loading weights locally from `{save_dir}`")
 
         input_shape = config_kwargs.pop("input_shape", (1, 2048))
-        config = Wav2Vec2Config.from_json(os.path.join(save_dir, "config.json"))
+        config = Wav2Vec2Config.from_json(
+            os.path.join(save_dir, "config.json"))
         config = replace(config, **config_kwargs)
         model = cls(config, input_shape=input_shape)
         model.load_weights(os.path.join(save_dir, "tf_model.h5"))
@@ -103,10 +105,13 @@ class TFKerasModel(tf.keras.Model):
 
 
 class Wav2Vec2Model(TFKerasModel):
-    def __init__(self, config: Wav2Vec2Config, input_shape=(1, 246000), name="wav2vec2"):
+    def __init__(
+        self, config: Wav2Vec2Config, input_shape=(1, 246000), name="wav2vec2"
+    ):
         super().__init__(name=name)
         if not isinstance(config, Wav2Vec2Config):
-            raise ValueError("`config` must be an instace of `Wave2Vec2Config`")
+            raise ValueError(
+                "`config` must be an instace of `Wave2Vec2Config`")
 
         self.config = config
         self.hidden_size = config.hidden_size
@@ -181,9 +186,13 @@ class Wav2Vec2Model(TFKerasModel):
             Logits from the model of shape (batch_size, seqlen, hidden_dim).
         """
         if self.is_robust and attention_mask is None:
-            logger.warning("You should pass `attention_mask` when working with Wav2Vec2 new checkpoints")
+            logger.warning(
+                "You should pass `attention_mask` when working with Wav2Vec2 new checkpoints"
+            )
         elif not self.is_robust and attention_mask is not None:
-            logger.warning("You should not pass `attention_mask` when working with checkpoints based on `wav2vec2-base`")
+            logger.warning(
+                "You should not pass `attention_mask` when working with checkpoints based on `wav2vec2-base`"
+            )
 
         batch = tf.expand_dims(batch, axis=-1)
         for feature_extractor_layer in self.feature_extractor:
@@ -203,10 +212,63 @@ class Wav2Vec2Model(TFKerasModel):
             for kernal_size, stride in zip(self.kernal_sizes, self.strides):
                 input_length = 1 + (input_length - kernal_size) // stride
 
-            attention_mask = tf.sequence_mask(input_length, maxlen=batch.shape[1])
+            attention_mask = tf.sequence_mask(
+                input_length, maxlen=batch.shape[1])
 
-        batch = self.encoder(batch, attention_mask=attention_mask, training=training)
+        batch = self.encoder(
+            batch, attention_mask=attention_mask, training=training)
         return batch
+
+    def features(
+        self, batch, attention_mask: Optional[tf.Tensor] = None, training=False
+    ):
+        """
+        Args:
+            batch (:obj: `tf.Tensor`) of shape (batch_size, seqlen):
+                Sound tensor obtained from `Wav2Vec2Processor.__call__`.
+            attention_mask (:obj: `tf.Tensor`, `optional`) of shape (batch_size, seqlen):
+                Don't pass `attention_mask` when working with checkpoints based on `wav2vec2-base`
+                otherwise you should pass this argument.
+            training (:obj: `bool`, `optional`):
+                Whether to use model for training.
+
+        Returns:
+            Logits from the model of shape (batch_size, seqlen, hidden_dim).
+        """
+        if self.is_robust and attention_mask is None:
+            logger.warning(
+                "You should pass `attention_mask` when working with Wav2Vec2 new checkpoints"
+            )
+        elif not self.is_robust and attention_mask is not None:
+            logger.warning(
+                "You should not pass `attention_mask` when working with checkpoints based on `wav2vec2-base`"
+            )
+        batch = tf.expand_dims(batch, axis=-1)
+        for feature_extractor_layer in self.feature_extractor:
+            batch = feature_extractor_layer(batch)
+        batch = self.feature_projection(batch, training=training)
+        features = {"Encoder_In": batch}
+        if training and self.apply_spec_augment:
+            batch = apply_spec_augmentation(
+                batch,
+                self.masked_spec_augment,
+                self.mask_time_prob,
+                self.mask_time_lengtODh,
+            )
+
+        if attention_mask is not None:
+            input_length = tf.reduce_sum(attention_mask, axis=-1)
+            for kernal_size, stride in zip(self.kernal_sizes, self.strides):
+                input_length = 1 + (input_length - kernal_size) // stride
+
+            attention_mask = tf.sequence_mask(
+                input_length, maxlen=batch.shape[1])
+
+        batch = self.encoder.features(
+            batch, attention_mask=attention_mask, training=training
+        )
+        features = {**features, **batch}
+        return features
 
     def freeze_feature_extractor(self):
         """This will freeze the feature extractor layers (Recommended to use for fine-tuning)."""
@@ -222,7 +284,8 @@ class Wav2Vec2ForCTC(TFKerasModel):
     ):
         super().__init__(name=name)
         if not isinstance(config, Wav2Vec2Config):
-            raise ValueError("`config` must be an instace of `Wave2Vec2Config`.")
+            raise ValueError(
+                "`config` must be an instace of `Wave2Vec2Config`.")
         self.config = config
         self.pad_id = config.pad_id
 
@@ -236,7 +299,12 @@ class Wav2Vec2ForCTC(TFKerasModel):
         """This will freeze the feature extractor layers (Recommended to use for fine-tuning)."""
         self.model.freeze_feature_extractor()
 
-    def call(self, batch: tf.Tensor, attention_mask: Optional[tf.Tensor] = None, training=False):
+    def call(
+        self,
+        batch: tf.Tensor,
+        attention_mask: Optional[tf.Tensor] = None,
+        training=False,
+    ):
         """
         Args:
             batch (:obj: `tf.Tensor`) of shape (batch_size, seqlen):
@@ -249,7 +317,18 @@ class Wav2Vec2ForCTC(TFKerasModel):
         Returns:
             Logits from the model of shape (batch_size, seqlen, vocab_size).
         """
-        batch = self.model(batch, attention_mask=attention_mask, training=training)
+        batch = self.model(
+            batch, attention_mask=attention_mask, training=training)
         batch = self.dropout(batch, training=training)
         batch = self.lm_head(batch)
         return batch
+
+    def features(
+        self,
+        batch: tf.Tensor,
+        attention_mask: Optional[tf.Tensor] = None,
+        training=False,
+    ):
+        return self.model.features(
+            batch, attention_mask=attention_mask, training=training
+        )

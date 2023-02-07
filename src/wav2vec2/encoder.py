@@ -27,14 +27,16 @@ class TransformerAttention(tf.keras.layers.Layer):
 
         q_out = q_out * head_size ** (-0.5)
 
-        batch = self.get_context(q_out, k_out, v_out, attention_mask=attention_mask, training=training)
+        batch = self.get_context(
+            q_out, k_out, v_out, attention_mask=attention_mask, training=training)
         batch = self.projection(batch)
         return batch
 
     def get_context(self, q_out, k_out, v_out, attention_mask=None, training=False):
 
         b, h, l, d = q_out.shape
-        attn_scores = tf.matmul(q_out, k_out, transpose_b=True)  # "bhqd,bhkd->bhqk"
+        attn_scores = tf.matmul(
+            q_out, k_out, transpose_b=True)  # "bhqd,bhkd->bhqk"
 
         if attention_mask is not None:
             attn_scores = attn_scores + attention_mask
@@ -114,7 +116,8 @@ class TransformerLayer(tf.keras.layers.Layer):
         residual = batch
         if self.attention_norm_type == "prenorm":
             batch = self.layer_norm(batch)
-        batch = self.attention(batch, attention_mask=attention_mask, training=training)
+        batch = self.attention(
+            batch, attention_mask=attention_mask, training=training)
         batch = self.dropout(batch, training=training)
         batch = batch + residual
         if self.attention_norm_type == "postnorm":
@@ -124,7 +127,8 @@ class TransformerLayer(tf.keras.layers.Layer):
         residual = batch
         if self.attention_norm_type == "prenorm":
             batch = self.final_layer_norm(batch)
-        batch = tf.nn.gelu(self.intermediate(batch), approximate=self.is_gelu_approx)
+        batch = tf.nn.gelu(self.intermediate(
+            batch), approximate=self.is_gelu_approx)
         batch = self.attn_output(self.dropout(batch, training=training))
         # stochastic depth from `paper <https://arxiv.org/abs/1603.09382> __`
         batch = self.stochastic_depth([residual, batch], training=training)
@@ -259,7 +263,8 @@ class Wav2Vec2Encoder(tf.keras.layers.Layer):
             # tf.broadcast_to doesn't work when batch size is unknown (especially with TFSavedModel)
             attention_mask = attention_mask[tf.newaxis, :, tf.newaxis, :]
             attention_mask = tf.repeat(attention_mask, seqlen, axis=0)
-            attention_mask = tf.reshape(attention_mask, (seqlen, -1, 1, seqlen))
+            attention_mask = tf.reshape(
+                attention_mask, (seqlen, -1, 1, seqlen))
             attention_mask = tf.transpose(attention_mask, perm=[1, 2, 0, 3])
 
         batch = batch + self.pos_conv_embed(batch)
@@ -269,11 +274,45 @@ class Wav2Vec2Encoder(tf.keras.layers.Layer):
 
         batch = self.dropout(batch, training=training)
         for layer in self.layers:
-            batch = layer(batch, attention_mask=attention_mask, training=training)
+            batch = layer(batch, attention_mask=attention_mask,
+                          training=training)
 
         if self.attention_norm_type == "prenorm":
             batch = self.layer_norm(batch)
         return batch
+
+    def features(self, batch, attention_mask=None, training=False):
+        if attention_mask is not None:
+            batch = tf.where(attention_mask[:, :, tf.newaxis], batch, 0.0)
+            seqlen = batch.shape[1]
+
+            attention_mask = tf.cast(attention_mask, dtype=batch.dtype)
+            attention_mask = (1.0 - attention_mask) * tf.constant(-10000.0)
+
+            # tf.broadcast_to doesn't work when batch size is unknown (especially with TFSavedModel)
+            attention_mask = attention_mask[tf.newaxis, :, tf.newaxis, :]
+            attention_mask = tf.repeat(attention_mask, seqlen, axis=0)
+            attention_mask = tf.reshape(
+                attention_mask, (seqlen, -1, 1, seqlen))
+            attention_mask = tf.transpose(attention_mask, perm=[1, 2, 0, 3])
+
+        batch = batch + self.pos_conv_embed(batch)
+
+        if self.attention_norm_type == "postnorm":
+            batch = self.layer_norm(batch)
+
+        batch = self.dropout(batch, training=training)
+
+        features = {}
+        for idx, layer in enumerate(self.layers):
+            batch = layer(batch, attention_mask=attention_mask,
+                          training=training)
+            features[f"TransformerLayer_{idx}"] = batch
+
+        if self.attention_norm_type == "prenorm":
+            batch = self.layer_norm(batch)
+        features[f"Encoder_Out"] = batch
+        return features
 
     def get_config(self):
         config = super().get_config()
